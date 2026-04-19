@@ -49,6 +49,7 @@ WALKING_MEAN_MAX      = 2.5
 WALKING_STD_MIN       = 0.10
 WALKING_STD_MAX       = 1.8
 MIN_EVENT_SAMPLES     = 10
+EVENT_MERGE_GAP       = 25   # merge same-type events separated by fewer samples than this
 
 # ── LLM / INDEX SETTINGS ──────────────────────────────────────────────────────
 OLLAMA_MODEL          = 'qwen2.5:0.5b'
@@ -120,8 +121,8 @@ def generate_synthetic_data() -> pd.DataFrame:
     ay = rng.normal(0, IMPACT_NOISE, len(t))
     az = rng.normal(GRAVITY_Z, IMPACT_NOISE, len(t))
     mid = len(t) // 2
-    ax[mid - 2 : mid + 3] += IMPACT_SPIKE
-    az[mid - 2 : mid + 3] += IMPACT_SPIKE
+    ax[mid - 8 : mid + 8] += IMPACT_SPIKE
+    az[mid - 8 : mid + 8] += IMPACT_SPIKE
     segments.append(pd.DataFrame({'accel_x': ax, 'accel_y': ay, 'accel_z': az,
                                    '_segment_label': 'impact'}))
 
@@ -153,8 +154,13 @@ def normalize_and_engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         std_val  = df[axis].std()
         df[axis] = (df[axis] - mean_val) / (std_val + ZSCORE_EPS)
 
+    # Gravity-corrected physical magnitude from raw axes.
+    # Z-scored axes collapse walking into the idle threshold because shaking's
+    # large amplitude dominates the global std; raw values keep physical units intact.
     df['accel_magnitude'] = np.sqrt(
-        df['accel_x']**2 + df['accel_y']**2 + df['accel_z']**2
+        df['_raw_accel_x']**2 +
+        df['_raw_accel_y']**2 +
+        (df['_raw_accel_z'] - GRAVITY_Z)**2
     )
     df['rolling_mean'] = (
         df['accel_magnitude']
@@ -250,13 +256,44 @@ def _classify_sample(rmean: float, rstd: float) -> str:
     """Apply threshold rules to one (rolling_mean, rolling_std) pair."""
     if rstd < IDLE_STD_MAX:
         return 'idle'
+    # Impact: spike drives both mean and std high simultaneously.
     if rmean > IMPACT_MEAN_MIN and rstd > IMPACT_STD_MIN:
         return 'impact'
+    # Shaking: circular X-Y oscillation keeps magnitude nearly constant
+    # (low std) but the mean stays elevated well above walking range.
+    if rmean > IMPACT_MEAN_MIN:
+        return 'shaking'
     if rstd > SHAKING_STD_MIN:
         return 'shaking'
     if WALKING_MEAN_MIN <= rmean <= WALKING_MEAN_MAX and WALKING_STD_MIN <= rstd <= WALKING_STD_MAX:
         return 'walking'
     return 'unknown'
+
+
+def _merge_events(events: List[MotionEvent], df: pd.DataFrame) -> List[MotionEvent]:
+    """Merge consecutive same-type events separated by fewer than EVENT_MERGE_GAP samples."""
+    if len(events) < 2:
+        return events
+    dt = float(df['timestamp'].iloc[1] - df['timestamp'].iloc[0])
+    gap_seconds = EVENT_MERGE_GAP * dt
+    merged = [events[0]]
+    for ev in events[1:]:
+        prev = merged[-1]
+        if ev.type == prev.type and (ev.start - prev.end) <= gap_seconds:
+            start_idx = int(round(prev.start / dt))
+            end_idx   = int(round(ev.end   / dt))
+            window = df.iloc[start_idx:end_idx + 1]
+            merged[-1] = MotionEvent(
+                start    = prev.start,
+                end      = ev.end,
+                type     = prev.type,
+                max_mag  = float(window['accel_magnitude'].max()),
+                mean_mag = float(window['accel_magnitude'].mean()),
+                seed     = prev.seed,
+            )
+        else:
+            merged.append(ev)
+    return merged
 
 
 def detect_events(df: pd.DataFrame) -> List[MotionEvent]:
@@ -288,7 +325,7 @@ def detect_events(df: pd.DataFrame) -> List[MotionEvent]:
                 seed     = _SEED_MAP[current_label],
             ))
         i = j
-    return events
+    return _merge_events(events, df)
 
 
 # ── Section 5: Summarizer ─────────────────────────────────────────────────────
