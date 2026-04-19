@@ -34,6 +34,11 @@ RANDOM_SEED           = 42
 ROLLING_WINDOW        = 50
 ZSCORE_EPS            = 1e-8
 
+# ── IQR OUTLIER REMOVAL CONSTANTS ─────────────────────────────────────────────
+IQR_MULTIPLIER        = 1.5    # Tukey fence (1.5 = standard; 3.0 = extreme-only)
+IQR_APPLY_LOWER       = True   # clip sensor dropouts / dead-zone glitches
+IQR_APPLY_UPPER       = False  # keep high-energy events (impacts, shaking) intact
+
 # ── EVENT DETECTION THRESHOLDS ────────────────────────────────────────────────
 IDLE_STD_MAX          = 0.15
 IMPACT_MEAN_MIN       = 2.5
@@ -165,6 +170,80 @@ def normalize_and_engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ── Section 3b: IQR Outlier Removal ──────────────────────────────────────────
+
+def remove_outliers_iqr(df: pd.DataFrame) -> tuple:
+    """
+    Winsorise accel_magnitude using the Tukey IQR fence.
+
+    - Lower fence  (Q1 - IQR_MULTIPLIER * IQR): clips sensor dropouts and
+      dead-zone glitches that read near-zero or negative.
+    - Upper fence  is NOT applied by default — impacts and shaking produce
+      legitimately high magnitudes that must reach detect_events() intact.
+
+    Rolling mean and std are recomputed on the cleaned magnitude so that
+    the event detector sees clean statistics.
+
+    Returns
+    -------
+    cleaned_df : pd.DataFrame  (same length, magnitudes winsorised)
+    report     : dict          (Q1, Q3, IQR, fences, n_clipped, pct_clipped)
+    """
+    required = {'accel_magnitude', 'rolling_mean', 'rolling_std'}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(
+            f'Missing columns: {missing}. Run normalize_and_engineer_features first.'
+        )
+
+    df = df.copy()
+    mag = df['accel_magnitude']
+
+    q1  = float(mag.quantile(0.25))
+    q3  = float(mag.quantile(0.75))
+    iqr = q3 - q1
+
+    lower_fence = q1 - IQR_MULTIPLIER * iqr
+    upper_fence = q3 + IQR_MULTIPLIER * iqr
+
+    # Flag which samples fall outside the fences before clipping
+    below = mag < lower_fence
+    above = mag > upper_fence
+    df['_iqr_outlier'] = below | (above & IQR_APPLY_UPPER)
+
+    # Winsorise: clip only the chosen fences
+    clip_lo = max(lower_fence, 0.0) if IQR_APPLY_LOWER else None
+    clip_hi = upper_fence           if IQR_APPLY_UPPER else None
+    df['accel_magnitude'] = mag.clip(lower=clip_lo, upper=clip_hi)
+
+    # Recompute rolling stats on cleaned magnitude
+    df['rolling_mean'] = (
+        df['accel_magnitude']
+        .rolling(window=ROLLING_WINDOW, min_periods=1, center=True)
+        .mean()
+    )
+    df['rolling_std'] = (
+        df['accel_magnitude']
+        .rolling(window=ROLLING_WINDOW, min_periods=1, center=True)
+        .std()
+        .fillna(0)
+    )
+
+    n_clipped = int(df['_iqr_outlier'].sum())
+    report = {
+        'q1':           round(q1, 4),
+        'q3':           round(q3, 4),
+        'iqr':          round(iqr, 4),
+        'lower_fence':  round(lower_fence, 4),
+        'upper_fence':  round(upper_fence, 4),
+        'n_clipped':    n_clipped,
+        'pct_clipped':  round(n_clipped / len(df) * 100, 2),
+        'rows_total':   len(df),
+    }
+
+    return df, report
+
+
 # ── Section 4: Event Detection ────────────────────────────────────────────────
 
 def _classify_sample(rmean: float, rstd: float) -> str:
@@ -293,15 +372,67 @@ def build_index(events: List[MotionEvent], summaries: List[str],
 
 
 def _keyword_fallback(question: str, summaries: List[str]) -> str:
-    """Score summaries by keyword overlap and return top matches."""
-    q_terms = question.lower().split()
-    scored = [(sum(t in s.lower() for t in q_terms), s) for s in summaries]
-    scored = [(sc, s) for sc, s in scored if sc > 0]
-    if not scored:
-        return 'No matching events found. Try: idle, impact, shaking, walking.'
-    scored.sort(key=lambda x: x[0], reverse=True)
-    header = '[Keyword fallback — Ollama not running]\n'
-    return header + '\n'.join(f'  \u2022 {s}' for _, s in scored[:SIMILARITY_TOP_K])
+    """Intent-aware keyword fallback when Ollama is not running."""
+    import re as _re
+    q = question.lower()
+    note = '> *Ollama not running — using keyword fallback. Start Ollama for full NL answers.*\n\n'
+
+    if not summaries:
+        return note + 'No events available. Run the pipeline first.'
+
+    def _bullets(items):
+        return '\n'.join(f'• {s}' for s in items)
+
+    def _max_mag(s):
+        m = _re.search(r'peak magnitude ([\d.]+)', s)
+        return float(m.group(1)) if m else 0.0
+
+    # ── Intent: dangerous / high-severity ────────────────────────────────────
+    if any(w in q for w in ('danger', 'severe', 'critical', 'high', 'worst', 'alert', 'bad')):
+        matched = [s for s in summaries if any(k in s.lower() for k in ('impact', 'shaking', 'high', 'severe', 'critical'))]
+        if not matched:
+            return note + 'No high-severity events (impact or shaking) were detected in this recording.'
+        return note + f'**{len(matched)} high-severity event(s) detected:**\n\n' + _bullets(matched)
+
+    # ── Intent: specific event type ───────────────────────────────────────────
+    type_map = {'idle': 'idle', 'rest': 'idle', 'still': 'idle',
+                'walk': 'walking', 'moving': 'walking', 'motion': 'walking',
+                'impact': 'impact', 'hit': 'impact', 'collision': 'impact', 'drop': 'impact',
+                'shak': 'shaking', 'vibrat': 'shaking', 'tremor': 'shaking'}
+    for kw, ev_type in type_map.items():
+        if kw in q:
+            matched = [s for s in summaries if ev_type in s.lower()]
+            if not matched:
+                return note + f'No **{ev_type}** events were detected in this recording.'
+            return note + f'**{len(matched)} {ev_type} event(s):**\n\n' + _bullets(matched)
+
+    # ── Intent: peak / maximum ────────────────────────────────────────────────
+    if any(w in q for w in ('peak', 'max', 'highest', 'strongest', 'largest', 'biggest')):
+        top = max(summaries, key=_max_mag, default=None)
+        if not top:
+            return note + 'No magnitude data found in events.'
+        return note + f'**Highest-magnitude event:**\n\n• {top}'
+
+    # ── Intent: duration / time ───────────────────────────────────────────────
+    if any(w in q for w in ('long', 'duration', 'how long', 'last', 'period', 'time', 'seconds')):
+        return note + f'**All {len(summaries)} events with timing:**\n\n' + _bullets(summaries)
+
+    # ── Intent: summary / list all ────────────────────────────────────────────
+    if any(w in q for w in ('all', 'every', 'summarise', 'summarize', 'overview', 'list', 'describe', 'order', 'happened')):
+        return note + f'**Full event log ({len(summaries)} events):**\n\n' + _bullets(summaries)
+
+    # ── General: keyword scoring (skip stop-words) ────────────────────────────
+    stop = {'the','a','an','is','are','was','were','any','there','what','how',
+            'when','did','do','i','me','my','in','of','to','for','and','or'}
+    q_terms = set(q.split()) - stop
+    if q_terms:
+        scored = [(sum(t in s.lower() for t in q_terms), s) for s in summaries]
+        scored = [(sc, s) for sc, s in scored if sc > 0]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        if scored:
+            return note + _bullets(s for _, s in scored[:SIMILARITY_TOP_K])
+
+    return note + f'No close matches found. Here is the full event log:\n\n' + _bullets(summaries)
 
 
 def query_events(question: str, index, summaries: List[str],
@@ -348,9 +479,16 @@ def run_pipeline(csv_path: Optional[str] = None, llm=None, embed_model=None):
     else:
         df_raw = generate_synthetic_data()
 
-    df        = normalize_and_engineer_features(df_raw)
-    events    = detect_events(df)
-    summaries = [summarize_event(ev) for ev in events]
-    index     = build_index(events, summaries, llm=llm, embed_model=embed_model)
+    df              = normalize_and_engineer_features(df_raw)
+    df, iqr_report  = remove_outliers_iqr(df)
+    events          = detect_events(df)
+    summaries       = [summarize_event(ev) for ev in events]
+    index           = build_index(events, summaries, llm=llm, embed_model=embed_model)
 
-    return {'df': df, 'events': events, 'summaries': summaries, 'index': index}
+    return {
+        'df':         df,
+        'events':     events,
+        'summaries':  summaries,
+        'index':      index,
+        'iqr_report': iqr_report,
+    }
