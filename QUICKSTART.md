@@ -4,13 +4,13 @@ One page. Everything you need to go from zero to a running notebook.
 
 ---
 
-## Google Colab Setup (5 Steps)
+## Jupyter Notebook Setup (5 Steps)
 
 | Step | Action |
 |---|---|
-| 1 | Go to [colab.research.google.com](https://colab.research.google.com/) → **File → Open notebook → Upload** → select `SensorSpeak.ipynb` |
-| 2 | **Runtime → Change runtime type → T4 GPU** (free tier; speeds up embedding generation) |
-| 3 | **Runtime → Run all** (`Ctrl+F9` / `Cmd+F9`) |
+| 1 | Open `SensorSpeak.ipynb` in Jupyter or VS Code (`jupyter notebook SensorSpeak.ipynb`) |
+| 2 | Install dependencies: `pip install -r requirements.txt` |
+| 3 | **Kernel → Run All Cells** (`Ctrl+F9` / `Cmd+F9`) |
 | 4 | Wait for Ollama install + model pull (~5 min on first run, cached on subsequent runs) |
 | 5 | Scroll to **Section 10** for example query answers, **Section 11** to ask your own question |
 
@@ -20,7 +20,7 @@ One page. Everything you need to go from zero to a running notebook.
 
 ```bash
 # 1. Clone and enter the project
-git clone https://github.com/yourname/SensorSpeak.git
+git clone https://github.com/Srimonchaari/SensorSpeak.git
 cd SensorSpeak
 
 # 2. Create a virtual environment
@@ -130,5 +130,5 @@ After a full run, `outputs/` contains:
 
 ## Getting Help
 
-- Open an issue: `https://github.com/yourname/SensorSpeak/issues`
+- Open an issue: `https://github.com/Srimonchaari/SensorSpeak/issues`
 - Check the full parameter table in `README.md` → **Tunable Parameters**

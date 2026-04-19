@@ -350,7 +350,7 @@ shaking 15.00s   18.99s   4.00s     high      6.82
 
 ```bash
 # 1. Clone and enter the project
-git clone https://github.com/yourname/SensorSpeak.git
+git clone https://github.com/Srimonchaari/SensorSpeak.git
 cd SensorSpeak
 
 # 2. Python environment
