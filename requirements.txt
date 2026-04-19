@@ -1,0 +1,35 @@
+# Core pipeline
+pandas>=2.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+
+# LlamaIndex stack
+llama-index-core>=0.10.0
+llama-index-llms-ollama>=0.1.0
+llama-index-embeddings-huggingface>=0.1.0
+sentence-transformers>=2.2.0
+
+# Gradio UI
+gradio>=4.0.0
+
+# PDF ingestion
+pypdf>=3.0.0
+
+# Image handling (used by Gradio figure rendering)
+Pillow>=10.0.0
+
+# Testing
+pytest>=7.4.0
+
+# ── Optional backends (install only what you need) ────────────────────────────
+# OpenAI backend:
+#   pip install llama-index-llms-openai llama-index-embeddings-openai
+#
+# HuggingFace Inference API backend:
+#   pip install llama-index-llms-huggingface-api
+#
+# HuggingFace local LLM backend:
+#   pip install llama-index-llms-huggingface transformers accelerate
+#
+# Fine-tuning with LoRA (finetune_prep.py Option 1):
+#   pip install peft trl datasets accelerate bitsandbytes

@@ -1,0 +1,100 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.installed.cfg
+MANIFEST
+
+# ── Virtual environments ───────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.env/
+
+# ── Environment variables / secrets ───────────────────────────────────────────
+# NEVER commit API keys
+.env
+.env.local
+.env.*.local
+secrets.py
+secrets.json
+credentials.json
+Bosch_Accelerometer_Motion_Event_Explainer.ipynb
+Bosch_Accelerometer_Ollama_QueryEngine.ipynb
+
+
+# ── Jupyter ────────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+# Uncomment the line below to ignore all notebook outputs (cleaner diffs)
+# *.ipynb
+
+# ── Generated outputs (re-created on each pipeline run) ───────────────────────
+outputs/
+*.png
+*.csv
+# Keep the outputs/ directory itself tracked (but not its contents)
+!outputs/.gitkeep
+
+# ── Fine-tuning artifacts ──────────────────────────────────────────────────────
+sensospeak_lora/
+*.safetensors
+*.bin
+adapter_config.json
+adapter_model.safetensors
+
+# ── Ollama / model files ───────────────────────────────────────────────────────
+*.gguf
+*.ggml
+Modelfile.local          # local Modelfile variants with private system prompts
+
+# ── PDF datasheets ─────────────────────────────────────────────────────────────
+# Bosch PDFs are large binaries available from the vendor website
+*.pdf
+
+# ── macOS ──────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# ── Windows ────────────────────────────────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ── Linux ──────────────────────────────────────────────────────────────────────
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+
+# ── IDEs ───────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# ── Testing / coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+coverage.xml
+*.cover
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
